@@ -26,7 +26,7 @@ namespace EasyAbp.EShop.Payments.Payments
         private readonly IDistributedEventBus _distributedEventBus;
         private readonly IOrderAppService _orderAppService;
         private readonly IPaymentRepository _repository;
-        
+
         public PaymentAppService(
             IDistributedEventBus distributedEventBus,
             IOrderAppService orderAppService,
@@ -49,10 +49,10 @@ namespace EasyAbp.EShop.Payments.Payments
 
             return payment;
         }
-        
-        protected override IQueryable<Payment> CreateFilteredQuery(GetPaymentListDto input)
+
+        protected override async Task<IQueryable<Payment>> CreateFilteredQueryAsync(GetPaymentListDto input)
         {
-            var query = base.CreateFilteredQuery(input);
+            var query = await base.CreateFilteredQueryAsync(input);
 
             if (input.UserId.HasValue)
             {
@@ -73,19 +73,19 @@ namespace EasyAbp.EShop.Payments.Payments
 
             return await base.GetListAsync(input);
         }
-        
+
         [Authorize(PaymentsPermissions.Payments.Create)]
         public virtual async Task CreateAsync(CreatePaymentDto input)
         {
             // Todo: should avoid duplicate creations. (concurrent lock)
 
             var orders = new List<OrderDto>();
-            
+
             foreach (var orderId in input.OrderIds)
             {
                 orders.Add(await _orderAppService.GetAsync(orderId));
             }
-            
+
             await AuthorizationService.CheckAsync(
                 new PaymentCreationResource
                 {
@@ -95,21 +95,19 @@ namespace EasyAbp.EShop.Payments.Payments
                 new PaymentOperationAuthorizationRequirement(PaymentOperation.Creation)
             );
 
-            var createPaymentEto = new CreatePaymentEto
-            {
-                TenantId = CurrentTenant.Id,
-                UserId = CurrentUser.GetId(),
-                PaymentMethod = input.PaymentMethod,
-                Currency = orders.First().Currency,
-                ExtraProperties = new ExtraPropertyDictionary(),
-                PaymentItems = orders.Select(order => new CreatePaymentItemEto
+            var createPaymentEto = new CreatePaymentEto(
+                CurrentTenant.Id,
+                CurrentUser.GetId(),
+                input.PaymentMethod,
+                orders.First().Currency,
+                orders.Select(order => new CreatePaymentItemEto
                 {
                     ItemType = PaymentsConsts.PaymentItemType,
                     ItemKey = order.Id.ToString(),
                     OriginalPaymentAmount = order.ActualTotalPrice,
                     ExtraProperties = new ExtraPropertyDictionary {{"StoreId", order.StoreId.ToString()}}
                 }).ToList()
-            };
+            );
 
             await _distributedEventBus.PublishAsync(createPaymentEto);
         }
